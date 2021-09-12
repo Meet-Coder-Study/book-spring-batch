@@ -421,3 +421,255 @@ public void initialize() {
 
 
 ## 배치 인프라스트럭쳐 구성하기
+
+### @EnableBatchProcessing
+1. @Import(BatchConfigurationSelector.class)
+2. @EnableBatchProcessing의 modular가 디폴트로 false
+3. BatchConfigurationSelector.class > selectImports() 에서 new String[] { SimpleBatchConfiguration.class.getName() }; 리턴
+4. SimpleBatchConfiguration.class에서 여러 핵심 Bean(JobRepository/ JobLauncher 등) 의 프록시 생성
+   1. 참고로 SimpleBatchConfiguration.class의 상위 클래스인 AbstractBatchConfiguration에서 StepScope와 JobScope 생성
+
+### BatchConfigurer 인터페이스
+
+```java
+public interface BatchConfigurer {
+
+	JobRepository getJobRepository() throws Exception;
+
+	PlatformTransactionManager getTransactionManager() throws Exception;
+
+	JobLauncher getJobLauncher() throws Exception;
+
+	JobExplorer getJobExplorer() throws Exception;
+}
+
+```
+DefaultBatchConfigurer class가 BatchConfigurer를 기본적으로 구현했기 때문에 인프라를 커스텀하게 구성하고 싶다면 DefaultBatchConfigurer를 상속받아 필요한 메소드만 오버라이드하면 된다.
+
+### JobRepository 커스터마이징하기
+```java
+@Configuration
+public class CustomBatchConfigurer extends DefaultBatchConfigurer {
+
+    @Autowired
+    DataSource ds;
+
+    @Override
+    protected JobRepository createJobRepository() throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(ds);
+        factory.setTransactionManager(getTransactionManager());
+        factory.setIsolationLevelForCreate("ISOLATION_REPEATABLE_READ");
+        factory.afterPropertiesSet();
+        return factory.getObject();
+    }
+}
+```
+afterPropertiesSet()을 호출하고 factory.getObject()을 리턴한다.
+위 두개 메서드를 컨테이너에서 따로 호출하지 않기 때문에 create.. 류를 호출할때는 수동으로 호출하는 것을 유의해야한다.
+
+create.. 류는 DefaultBatchConfigurer에 정의되 메소드로 컨테이너에서 호출하지 않고 DefaultBatchConfigurer의 @PostConstruct public void initialize() 안에서 호출됨.
+
+해당 프로젝트에 두 개 이상의 데이터소스가 존재한다면 명시적으로 선택 할 수 있다.
+
+### TransactionManager 커스터마이징하기
+
+DefaultBatchConfigurer 에서는 트랜잭션 매니저를 setDatasource에서 생성한다(DataSourceTransactionManager)
+따라서 protected create... 류를 오바라이딩 하지 않고 BatchConfigurer 인터페이스의 getTransactionManager()를 오버라이딩한다.
+
+```java
+@Configuration
+public class CustomBatchConfigurer extends DefaultBatchConfigurer {
+
+    @Autowired
+    DataSource ds;
+
+    @Override
+    protected JobRepository createJobRepository() throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(ds);
+        factory.setTransactionManager(getTransactionManager());
+        factory.setIsolationLevelForCreate("ISOLATION_REPEATABLE_READ");
+        factory.afterPropertiesSet();
+        return factory.getObject();
+    }
+
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
+
+    @Override
+    public PlatformTransactionManager getTransactionManager() {
+
+        return this.transactionManager;
+    }
+}
+
+```
+
+### JobExplorer 커스터마이징하기
+JobExplorer는 JobRepository에서 제공하는 API에 접근하여 읽기 전용으로 제공.
+
+```java
+@Configuration
+public class CustomBatchConfigurer extends DefaultBatchConfigurer {
+
+    @Autowired
+    DataSource ds;
+
+    @Override
+    protected JobRepository createJobRepository() throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(ds);
+        factory.setTransactionManager(getTransactionManager());
+        factory.setIsolationLevelForCreate("ISOLATION_REPEATABLE_READ");
+        factory.afterPropertiesSet();
+        return factory.getObject();
+    }
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
+
+    @Override
+    public PlatformTransactionManager getTransactionManager() {
+
+        return this.transactionManager;
+    }
+
+    @Override
+    protected JobExplorer createJobExplorer() throws Exception {
+        JobExplorerFactoryBean jobExplorerFactoryBean = new JobExplorerFactoryBean();
+        jobExplorerFactoryBean.setDataSource(this.ds);
+        jobExplorerFactoryBean.afterPropertiesSet();
+        return jobExplorerFactoryBean.getObject();
+    }
+}
+```
+
+### JobLauncher 커스터마이징하기
+
+JobLauncher는 스프링 배치 잡을 실행하는 진입점.
+기본으로 SimpleJobLauncher 사용.
+하지만 커스텀 할 필요가 생길 경우 아래와 같은 방식으로 커스터마이징 가능.
+
+```java
+@Configuration
+public class CustomBatchConfigurer extends DefaultBatchConfigurer {
+
+    @Autowired
+    DataSource ds;
+
+    @Override
+    protected JobRepository createJobRepository() throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(ds);
+        factory.setTransactionManager(getTransactionManager());
+        factory.setIsolationLevelForCreate("ISOLATION_REPEATABLE_READ");
+        factory.afterPropertiesSet();
+        return factory.getObject();
+    }
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
+
+    @Override
+    public PlatformTransactionManager getTransactionManager() {
+
+        return this.transactionManager;
+    }
+
+    @Override
+    protected JobExplorer createJobExplorer() throws Exception {
+        JobExplorerFactoryBean jobExplorerFactoryBean = new JobExplorerFactoryBean();
+        jobExplorerFactoryBean.setDataSource(this.ds);
+        jobExplorerFactoryBean.afterPropertiesSet();
+        return jobExplorerFactoryBean.getObject();
+    }
+
+    @Override
+    protected JobLauncher createJobLauncher() throws Exception {
+        SimpleJobLauncher jobLauncher = new SimpleJobLauncher();
+        jobLauncher.setJobRepository(this.createJobRepository());
+        jobLauncher.afterPropertiesSet();
+        return jobLauncher;
+    }
+}
+```
+
+
+### 데이터베이스 구성하기
+
+```properties
+spring:
+  datasource:
+    driverClassName: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/spring_batch
+    username: root
+    password: mysql
+  batch:
+    initialize-schema: always
+
+```
+batch.initialize-schema : 스프링 배치 실행 시 스크립트 실행여부 설정
+
+- 속성값
+  - always : 항상 스크리브 실행. 개발시에 적합. 
+  - never : 스크립트 실행 안함
+  - embedded : 내장 데이터베이스 사용 시. 실행할때마다 초기화 된다는 가정으로 사용.
+
+## 잡 메타데이터 사용하기
+
+### JobExplorer
+
+JobRepository와 같이 데이터베이스에 직접 접근.
+
+```java
+public class ExploringTasklet implements Tasklet {
+
+	private JobExplorer explorer;
+
+	public ExploringTasklet(JobExplorer explorer) {
+		this.explorer = explorer;
+	}
+
+	public RepeatStatus execute(StepContribution stepContribution,
+			ChunkContext chunkContext) {
+
+		String jobName = chunkContext.getStepContext().getJobName();
+
+		List<JobInstance> instances =
+				explorer.getJobInstances(jobName,
+						0,
+						Integer.MAX_VALUE);
+
+		System.out.println(
+				String.format("There are %d job instances for the job %s",
+				instances.size(),
+				jobName));
+
+		System.out.println("They have had the following results");
+		System.out.println("************************************");
+
+		for (JobInstance instance : instances) {
+			List<JobExecution> jobExecutions =
+					this.explorer.getJobExecutions(instance);
+
+			System.out.println(
+					String.format("Instance %d had %d executions",
+							instance.getInstanceId(),
+							jobExecutions.size()));
+
+			for (JobExecution jobExecution : jobExecutions) {
+				System.out.println(
+						String.format("\tExecution %d resulted in Exit Status %s",
+								jobExecution.getId(),
+								jobExecution.getExitStatus()));
+			}
+		}
+
+		return RepeatStatus.FINISHED;
+	}
+}
+```
+
+
