@@ -46,10 +46,11 @@
 - Batch Job의 시작점
 - Job을 **처음 실행하면** 단일 JobInstance 레코드가 해당 테이블에 등록된다
 - Job의 이름, optimistic lock의 version, JobInstance의 고유 key
-- BATCH_JOB_EXECUTION
-    - 배치 잡의 실제 실행 기록
-        - optimistic lock의 version, Job 실행 시작 시간, 실행 완료 시간, Job의 종료 코드, 종료 코드와 관련된 메시지 등등...
-    - Job이 실행될 때마다 해당 테이블에 생성됨
+
+### BATCH_JOB_EXECUTION
+- 배치 잡의 실제 실행 기록
+- optimistic lock의 version, Job 실행 시작 시간, 실행 완료 시간, Job의 종료 코드, 종료 코드와 관련된 메시지 등등...
+- Job이 실행될 때마다 해당 테이블에 생성됨
 
 ### BATCH_JOB_EXECUTION_CONTEXT
 
@@ -125,7 +126,6 @@ class ExploringJob(
             .build()
     }
 
-    @JobScope
     @Bean
     fun explorerStep(): Step {
         return this.stepBuilderFactory
