@@ -24,8 +24,9 @@ public interface ItemReader<T> {
 - 스텝 내에서 동작 방식
   - 스프링 배치가 read 메서드 호출
   - 아이템 한개 반환
-  - 청크의 limit 개수 만큼 반복
+  - 청크의 개수 만큼 반복
   - 청크 개수 만큼 확보되면 ItemProcessor -> ItemWriter로 청크 전달
+
 
 ## 파일 입력
 
@@ -36,6 +37,8 @@ public interface ItemReader<T> {
 플랫 파일 : 구분자가 없는 한개 이상의 레코드로 구성된 텍스트 파일
 
 FlatFileItemReader 사용.
+
+![image](https://user-images.githubusercontent.com/6725753/135234066-acfeeb76-de9d-4373-ae14-7b87e4caeba6.png)
 
 FlatFileItemReader은 내부적으로 Resource(파일)와 LineMapper(DefaultLineMapper) 구현체로 구성.
 
@@ -62,6 +65,10 @@ Sydnee     NRobinson  894 Ornare. Ave         Olathe          KS25606
 Stuart     KMckenzie  5529Orci Av.            Nampa           ID18562
 ```
 
+- LineMapper : DefaultLineMapper
+  - LineTokenizer : FixedLengthTokenizer
+  - FieldSetMapper : BeanWrapperFieldSetMapper 
+
 `<Lab1>`
 
 #### 필드가 구분자로 구분된 파일
@@ -77,11 +84,22 @@ Sydnee,N,Robinson,894,Ornare. Ave,Olathe,KS,25606
 Stuart,K,Mckenzie,5529,Orci Av.,Nampa,ID,18562
 ```
 
+- LineMapper : DefaultLineMapper
+  - LineTokenizer : DelimitedLineTokenizer
+  - FieldSetMapper : BeanWrapperFieldSetMapper
+
 `<Lab2>`
 
 건물번호와 거리명을 붙여서 단일 필드로 매핑
 
 FieldSetMapper의 커스텀 구현체 사용.
+
+FieldSet에서는 여러 타입의 값을 읽어올 수 있는 다양한 메서드 제공.
+(예제에서는 DefaultFieldSet class)
+
+- LineMapper : DefaultLineMapper
+  - LineTokenizer : DelimitedLineTokenizer
+  - FieldSetMapper : Custom
 
 `<Lab3>`
 
@@ -89,10 +107,24 @@ FieldSetMapper의 커스텀 구현체 사용.
 
 건물번호와 거리명을 합칠 때 커스텀 LineTokenizer 구현체 사용.
 
+```java
+public interface LineTokenizer {
+
+	FieldSet tokenize(String line);
+}
+```
+
 커스텀 LineTokenizer는 아래와 같은 경우에도 사용
 - 특이한 파일 포맷 파싱
 - 서드파티 파일 포맷 파싱
 - 특수한 타입 변환 요구 조건 처리
+
+- LineMapper : DefaultLineMapper
+  - LineTokenizer : Custom
+  - FieldSetMapper : BeanWrapperFieldSetMapper
+
+
+`<Lab4>`
 
 #### 여러 가지 레코드 포맷
 
@@ -112,20 +144,35 @@ TRANS,8116369,2011-01-22 13:51:05,48.55
 TRANS,8116369,2011-01-21 16:51:59,98.53
 ```
 
-`<Lab4>`
+- LineMapper : PatternMatchingCompositeLineMapper
+  - LineTokenizer(CUST) : DelimitedLineTokenizer
+  - FieldSetMapper(CUST) : BeanWrapperFieldSetMapper
+  - LineTokenizer(TRANS) : DelimitedLineTokenizer
+  - FieldSetMapper(TRANS) : Custom
+
+`<Lab5>`
 
 
 #### 여러 줄에 걸친 레코드
 
 하나의 커스터머에 여러개의 트랜잭션을 가진 도메인 객체로 변환하고 싶을때는?
 
-`<Lab5>`
+- LineMapper : PatternMatchingCompositeLineMapper
+  - LineTokenizer(CUST) : DelimitedLineTokenizer
+  - FieldSetMapper(CUST) : BeanWrapperFieldSetMapper
+  - LineTokenizer(TRANS) : DelimitedLineTokenizer
+  - FieldSetMapper(TRANS) : Custom
+
+
+`<Lab6>`
 
 #### 여러 개의 소스
 
 여러 개의 파일에서 읽어야 하는 경우라면?
 
-`<Lab6>`
+![image](https://user-images.githubusercontent.com/6725753/135420475-dd242b57-4c8c-4edd-b1f4-b6330ee74598.png)
+
+`<Lab7>`
 
 
 ### XML
@@ -154,34 +201,14 @@ https://ko.wikipedia.org/wiki/StAX
 
 ItemReader 구현체는 StaxEventItemReader 사용
 
-```java
-public class StaxEventItemReader<T> extends AbstractItemCountingItemStreamItemReader<T> implements
-ResourceAwareItemReaderItemStream<T>, InitializingBean {
-}
-
-public interface ResourceAwareItemReaderItemStream<T> extends ItemStreamReader<T> {
-
-  void setResource(Resource resource);
-}
-
-public interface ItemStreamReader<T> extends ItemStream, ItemReader<T> {
-
-}
-
-public interface ItemStream {
-
-  void open(ExecutionContext executionContext) throws ItemStreamException;
-  void update(ExecutionContext executionContext) throws ItemStreamException;
-  void close() throws ItemStreamException;
-}
-```
-
 XML 바인딩은 JAXB 사용.
 
-`<Lab7>`
+`<Lab8>`
 
 ### JSON
 
 XML과 방식은 거의 유사.
 
-`<Lab8>`
+매퍼는 Jackson이나 Gson 사용.
+
+`<Lab9>`
