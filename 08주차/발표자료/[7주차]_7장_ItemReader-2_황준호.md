@@ -90,7 +90,7 @@
       factoryBean.setSelectClause("select *");
       factoryBean.setFromClause("from customer");
       factoryBean.setWhereClause("where city = :city");
-      // 페이징 기법에선 order by절이 반드시 필요하다. 정렬키가 ResultSet내에서 중복되면 안된다
+      // 페이징 기법에선 order by절이 반드시 필요하다. 정렬키가 ResultSet내에서 중복되면 안된다(?)
       factoryBean.setSortKey("lastName");
       factoryBean.setDataSource(dataSource);
       return factoryBean;
@@ -116,7 +116,9 @@
 
   - 배치 잡에서 사용할 `TransactionManager` 커스텀
 
-    - 스프링 배치는 기본적으로 `DataSourceTransactionManager`를 제공하지만 예제에선 일반적인 `DataSource` 커넥션과 하이버네이트 세션을 아우르는 `TransactionManager`가 필요하다 
+    - 스프링 배치는 기본적으로 `TransactionManager`로 `DataSourceTransactionManager`를 제공한다
+    - 하지만 예제에선 일반적인 `DataSource` 커넥션과 하이버네이트 세션을 아우르는 `TransactionManager`가 필요하다 (왜인지는.. 모르겠음)
+    - 이런 목적으로 사용할 수 있는 `HibernateTransactionManager` 을 제공한다. (`DefaultBatchConfigurer`로 구성할 수 있다)
 
     ```java
     @Component
@@ -143,7 +145,7 @@
     }
     ```
 
-  - `HibernateCusorItemReader` config
+  - `HibernateCursorItemReader` config
 
     ```java
     @Bean
@@ -154,6 +156,7 @@
       return new HibernateCursorItemReaderBuilder<Customer>()
           .name("customerItemReader")
           .sessionFactory(entityManagerFactory.unwrap(SessionFactory.class))
+        	//여기선 queryString를 썼지만 queryName, queryProvider, nativeQuery도 사용 가능
           .queryString("from Customer where city = :city")
           .parameterValues(Collections.singletonMap("city", city))
           .build();
@@ -173,6 +176,7 @@
     return new HibernatePagingItemReaderBuilder<Customer>()
         .name("customerItemReader")
         .sessionFactory(entityManagerFactory.unwrap(SessionFactory.class))
+        // 이 예시엔 order by 기준이 없음. 지정되지 않으면 id순. 지정하려면 아래 sql에 order by 추가하기
         .queryString("from Customer where city = :city")
         .parameterValues(Collections.singletonMap("city", city))
         .pageSize(10)
@@ -182,7 +186,9 @@
 
 #### JPA
 
-- JPA는 커서기법은 제공하지 않지만 페이지기법은 제공한다
+- 하이버네이트는 커서기법 제공O, 페이징기법 제공O
+
+- JPA는 커서기법 제공X, 페이징기법 제공O
 
 - `JpaPagingItemReader`가 필요한 4가지 의존성
 
@@ -206,7 +212,7 @@
   }
   ```
 
-  `AbstractJpaQueryProvider`을 이용해서 설정할수도 있다
+  `queryString` 말고도 `AbstractJpaQueryProvider`을 이용해서 조회 쿼리를 설정할수도 있다
 
   ```java
   @StepScope
@@ -253,6 +259,18 @@
   - 데이터베이스 전용 코드의 집합
   - 스프링배치는 저장 프로시저에서 데이터를 조회하는 용도로 `StoredProcedureItemReader`을 제공한다
 
+  ```sql
+  DELIMITER //
+  
+  CREATE PROCEDURE customer_list(IN cityOption CHAR(16))
+    BEGIN
+      SELECT * FROM CUSTOMER
+      WHERE city = cityOption;
+    END //
+  
+  DELIMITER ;
+  ```
+
   ```java
   @Bean
   @StepScope
@@ -270,20 +288,6 @@
   }
   ```
 
-  ```sql
-  -- schema-mysql.sql
-  
-  DELIMITER //
-  
-  CREATE PROCEDURE customer_list(IN cityOption CHAR(16))
-    BEGIN
-      SELECT * FROM CUSTOMER
-      WHERE city = cityOption;
-    END //
-  
-  DELIMITER ;
-  ```
-
   ```java
   public class CustomerRowMapper implements RowMapper<Customer> {
   
@@ -292,12 +296,6 @@
       ...
     }
   }
-  ```
-
-  ```yaml
-  spring
-  	datasource
-  		schema: schema-mysql.sql
   ```
 
 #### 스프링 데이터
@@ -323,31 +321,31 @@
     2. 잡 정의
 
        ```java
-         @Bean
-         public Step mongoDbStep() {
-           return this.stepBuilderFactory.get("mongoDbStep")
-               .<Map, Map>chunk(10)
-               .reader(tweetsItemReader(null, null))
-               .writer(itemWriter())
-               .build();
-         }
+       @Bean
+       public Step mongoDbStep() {
+         return this.stepBuilderFactory.get("mongoDbStep")
+             .<Map, Map>chunk(10)
+             .reader(tweetsItemReader(null, null))
+             .writer(itemWriter())
+             .build();
+       }
        
-         @Bean
-         @StepScope
-         public ItemReader<? extends Map> tweetsItemReader(
-             MongoOperations mongoTemplate, @Value("#{jobParameters['hashTag']}") String hashtag
-         ) {
-           return new MongoItemReaderBuilder<Map>()
-               .name("tweetsItemReader") //잡을 재시작할 수 있도록 ExecutionContext에 상태를 저장하는데 사용
-               .targetType(Map.class) //반환되는 문서를 역직렬화할 대상 클래스
-               .jsonQuery("{ \"entities.hashtags.text\": {$eq: ?0 }}")
-               .collection("tweets_collection") //쿼리 대상 컬렉션
-               .parameterValues(Collections.singletonList(hashtag)) //쿼리에 필요판 파라미터
-               .pageSize(10)
-               .sorts(Collections.singletonMap("created_at", Direction.ASC)) //정렬기준 필드와 정렬 방법
-               .template(mongoTemplate) //쿼리 실행 대상 MongoOperations 구현체
-               .build();
-         }
+       @Bean
+       @StepScope
+       public ItemReader<? extends Map> tweetsItemReader(
+           MongoOperations mongoTemplate, @Value("#{jobParameters['hashTag']}") String hashtag
+       ) {
+         return new MongoItemReaderBuilder<Map>()
+             .name("tweetsItemReader") //잡을 재시작할 수 있도록 ExecutionContext에 상태를 저장하는데 사용
+             .targetType(Map.class) //반환되는 문서를 역직렬화할 대상 클래스
+             .jsonQuery("{ \"entities.hashtags.text\": {$eq: ?0 }}")
+             .collection("tweets_collection") //쿼리 대상 컬렉션
+             .parameterValues(Collections.singletonList(hashtag)) //쿼리에 필요판 파라미터
+             .pageSize(10)
+             .sorts(Collections.singletonMap("created_at", Direction.ASC)) //정렬기준 필드와 정렬 방법
+             .template(mongoTemplate) //쿼리 실행 대상 MongoOperations 구현체
+             .build();
+       }
        ```
 
     3. 프로퍼티 추가
@@ -417,21 +415,27 @@ public ItemReaderAdapter<Customer> customerItemReader(CustomerService customerSe
 ```java
 public class CustomerItemReader extends ItemStreamSupport implements ItemReader<Customer> {
 
+  private List<Customer> customers;
   private final String INDEX_KEY = "current.index.customers";
   private int curIndex;
+  
+  public CustomerItemReader() {
+    customers = new ArrayList<>(); //100명의 고객 정보가 들어 있다고 가정.
+    curIndex = 0;
+  }
 
   @Override
   public Customer read() {
-    return null;
+    // customers를 하나씩 읽고 반환, curIndex++
+    // curIndex가 50이면 예외 발생
   }
 
-  @Override
-  public void close() {
-  }
-
+  // ItemReader에서 필요한 상태를 초기화하려고 호출
+  // 리더의 이전 상태를 알기 위해 ExecutionContext를 사용할 수 있다.
+  // 예 : 잡을 재시작할때 이전 상태를 복원, 데이터베이스 연결 등
   @Override
   public void open(ExecutionContext executionContext) {
-    if (executionContext.containsKey(getExecutionContextKey(INDEX_KEY))) {
+    if (executionContext.containsKey(getExecutionContextKey(INDEX_KEY))) { //값이 설정되어 있으면 재시작한것
       int index = executionContext.getInt(getExecutionContextKey(INDEX_KEY));
       if (index == 50) {
         curIndex = 51;
@@ -443,14 +447,31 @@ public class CustomerItemReader extends ItemStreamSupport implements ItemReader<
     }
   }
 
+  // 스프링 배치가 잡의 상태를 갱신하는 처리에 사용됨
+  // 리더의 현재 상태(어떤 레코드가 현재 처리중인지)를 알기 위해 ExecutionContext를 사용할 수 있다.
+  // 아래 예제는 현재 처리중인 레코드를 나타내는 키-값 쌍을 추가함
   @Override
   public void update(ExecutionContext executionContext) {
     executionContext.putInt(getExecutionContextKey(INDEX_KEY), curIndex);
   }
+  
+  // 리소스를 닫는데 사용됨
+  @Override
+  public void close() {
+  }
 }
 ```
 
+```java
+@Bean
+public CustomerItemReader customerItemReader() {
+  CustomerItemReader customerItemReader = new CustomerItemReader();
+  customerItemReader.setName("customerItemReader");
+  return customerItemReader;
+}
+```
 
+- 이렇게 설정하면 `BATCH_STEP_EXECUTION` 테이블에서 커밋 카운트를 확인할 수 있다
 
 ### 에러 처리
 
