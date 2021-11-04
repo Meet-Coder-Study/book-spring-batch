@@ -7,6 +7,9 @@
 - 기존 서비스를 ItemWriter로 사용하고자 할 때 사용.
 - Write 대상이 기존 서비스이고 메소드 인자 타입이 아이템 타입을 그대로 사용할 수 있는 경우.
 - 따라서, 처리중인 아이템 타입 하나의 인수만 받을 수 있다.
+- 다른 인수 추가할 경우 아래와 같은 예외 발생
+
+`java.lang.IllegalArgumentException: No matching arguments found for method: logCustomer`
 
 ```java
 @Service
@@ -30,13 +33,15 @@ public ItemWriterAdapter<Customer> itemWriter(CustomerService customerService) {
 }
 ```
 
-`실습`
+`실습1`
 
 ### PropertyExtractingDelegatingItemWriter
 
 - ItemWriterAdaptor 에서는 기존 서비스가 도메인 객체를 받기 때문에 타입을 그대로 사용할 수 있지만 타입이 동일하지 않다면?
-- Write 대상이 기존 서비스이고 메소드 인자 타입이 아이템 타입과 다를 경우 사용.
 - PropertyExtractingDelegatingItemWriter는 이러한 경우에 아이템에서 값을 추출해서 넘겨줄 수 있다.
+- getter 이름과 다르면 아래와 같은 예외 발생 
+
+`org.springframework.beans.NotReadablePropertyException: Invalid property 'address_' of bean class [com.example.ch9.lab2.Customer]: Bean property 'address_' is not readable or has an invalid getter method: Does the return type of the getter match the parameter type of the setter?`
 
 ```java
 @Service
@@ -70,9 +75,15 @@ public PropertyExtractingDelegatingItemWriter<Customer> itemWriter(CustomerServi
     return itemWriter;
 }
 ```
-- setFieldsUsedAsTargetMethodArguments에 정의한 타입이 순서대로 도메인 서비스 메서드로 넘어간다.
+- setFieldsUsedAsTargetMethodArguments에 정의한 도메인 이름을 getter로 가져와서 도메인 서비스로 이 순서대로 넘어간다.
+- 도메인 서비스의 인수 개수를 넘어가면 무시한다
+- 도메인 서비스의 인수 개수보다 적으면 예외 발생한다.
 - PropertyExtractingDelegatingItemWriter는 AbstractMethodInvokingDelegator 상속. 이에 따라 arguments를 set 할 수 있지만 동적으로 추출되기 때문에 사용하지 않음.
-
+```java
+public void setArguments(Object[] arguments) {
+		this.arguments = arguments == null ? null : Arrays.asList(arguments).toArray();
+	}
+```
 `실습`
 
 ###  JmsItemWriter
@@ -81,7 +92,7 @@ public PropertyExtractingDelegatingItemWriter<Customer> itemWriter(CustomerServi
 
 - 실습 구조: file(CSV) -> step1 -> JMS Queue -> Step2 -> file(XML)
 
-- 주의사항: 스프링부트가 제공하는 ConnectionFactory는 JmsTemplate와 잘 동작하지 않기 때문에 CachingCConnectionFactory를 대신 사용
+- 주의사항: 스프링부트가 제공하는 ConnectionFactory는 JmsTemplate와 잘 동작하지 않기 때문에 CachingConnectionFactory를 대신 사용
 
 `실습`
 
@@ -90,6 +101,8 @@ public PropertyExtractingDelegatingItemWriter<Customer> itemWriter(CustomerServi
 - 이메일로 Write 할 때 사용
 
 - 실습 구조: file(CSV) -> step1 -> DB -> Step2 -> email
+
+- gmail smtp 설정 참고 : https://velog.io/@max9106/Spring-Boot-Gmail-SMTP-%EC%82%AC%EC%9A%A9%ED%95%98%EA%B8%B0%EB%A9%94%EC%9D%BC%EB%B3%B4%EB%82%B4%EA%B8%B0
 
 `실습`
 
@@ -106,6 +119,7 @@ public PropertyExtractingDelegatingItemWriter<Customer> itemWriter(CustomerServi
 
 - 지정된 개수만큼 처리하고 새로운 리소스 생성 가능
 - 실제 Write는 실제 Writer에게 위임하고 itemCountLimitPerResource(n)을 통해 리소스 분할하여 쓰기 가능
+- 청크 크기가 되었을때 마다 체크해서 리소스 설정 개수가 넘었을 때 쓰기 실행
 
 ![](http://images-20200215.ebookreading.net/6/4/4/9781484237243/9781484237243__the-definitive-guide__9781484237243__images__215885_2_En_9_Chapter__215885_2_En_9_Fig10_HTML.png) 
 
@@ -148,7 +162,7 @@ public MultiResourceItemWriter<Customer> multiCustomerFileWriter(CustomerOutputF
 }
 ```
 
-`실습`
+
 
 #### 헤더와 푸터 XML 프래그먼트
 
@@ -201,6 +215,8 @@ public StaxEventItemWriter<Customer> delegateItemWriter(CustomerXmlHeaderCallbac
 }
 ```
 
+`실습`
+
 플랫 파일일 경우 FlatFileFooterCallback 사용
 단, ItemWriterListener 사용 시 MultiResourceItemWriter가 FlatFileItemWriter을 감싸고 있어서 itemsWrittenInCurrentFile의 초기화가 제때 불려지지 않기 때문에 이런겅우 AOP를 걸어준다.
 
@@ -222,25 +238,29 @@ public MultiResourceItemWriter<Customer> multiFlatFileItemWriter() throws Except
 @Aspect
 public class CustomerRecordCountFooterCallback implements FlatFileFooterCallback {
 
-	private int itemsWrittenInCurrentFile = 0;
+    private int itemsWrittenInCurrentFile = 0;
 
-	@Override
-	public void writeFooter(Writer writer) throws IOException {
-		writer.write("This file contains " +
-				itemsWrittenInCurrentFile + " items");
-	}
+    @Override
+    public void writeFooter(Writer writer) throws IOException {
+        writer.write("This file contains " +
+                itemsWrittenInCurrentFile + " items");
+    }
 
-	@Before("execution(* org.springframework.batch.item.file.FlatFileItemWriter.write(..))")
-	public void beforeWrite(JoinPoint joinPoint) {
-		List<Customer> items = (List<Customer>) joinPoint.getArgs()[0];
+    @Before("execution(* org.springframework.batch.item.support.AbstractFileItemWriter.write(..))")
+    public void beforeWrite2(JoinPoint joinPoint) {
+        System.out.println("[ called public void beforeWrite(JoinPoint joinPoint)");
 
-		this.itemsWrittenInCurrentFile += items.size();
-	}
+        List<Customer> items = (List<Customer>) joinPoint.getArgs()[0];
 
-	@Before("execution(* org.springframework.batch.item.file.FlatFileItemWriter.open(..))")
-	public void resetCounter() {
-		this.itemsWrittenInCurrentFile = 0;
-	}
+        this.itemsWrittenInCurrentFile += items.size();
+    }
+
+    @Before("execution(* org.springframework.batch.item.support.AbstractFileItemWriter.open(..))")
+    public void resetCounter() {
+        System.out.println("[ called public void resetCounter()");
+
+        this.itemsWrittenInCurrentFile = 0;
+    }
 }
 ```
 ```java
@@ -283,7 +303,8 @@ public CompositeItemWriter<Customer> compositeItemWriter() throws Exception {
 }
 ```
 
-`실습`
+![image](https://user-images.githubusercontent.com/6725753/140279360-10c644e4-c4b7-41e6-ae29-3e7194c07e9b.png)
+
 
 ### ClassifierCompositeItemWriter
 
@@ -315,7 +336,8 @@ public class CustomerClassifier implements
 ```java
 @Bean
 	public ClassifierCompositeItemWriter<Customer> classifierCompositeItemWriter() throws Exception {
-		Classifier<Customer, ItemWriter<? super Customer>> classifier = new CustomerClassifier(xmlDelegate(null), jdbcDelgate(null));
+		Classifier<Customer, ItemWriter<? super Customer>> classifier = 
+        new CustomerClassifier(xmlDelegate(null), jdbcDelgate(null));
 
 		return new ClassifierCompositeItemWriterBuilder<Customer>()
 				.classifier(classifier)
